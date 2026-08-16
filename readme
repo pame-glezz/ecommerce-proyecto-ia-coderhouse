@@ -12,7 +12,7 @@ Para consultar los archivos Blueprint (.json) de los dos escenarios desarrollado
 
 # Diagrama de flujo
 
-![Diagrama de flujo Human-in-the-loop](screenshots/diagrama_flujo.png)
+![Diagrama de flujo Human-in-the-loop](diagrama_flujo.png)
 
 # Arquitectura: por qué el Human-in-the-loop detiene realmente el flujo
 
