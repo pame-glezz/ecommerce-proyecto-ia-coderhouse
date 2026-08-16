@@ -1,0 +1,128 @@
+# PROYECTO FINAL
+
+*Sistema de Clasificación y Enrutamiento de Preguntas de Compradores — E-commerce*
+
+# Blueprint del escenario (JSON)
+
+Para consultar los archivos Blueprint (.json) de los dos escenarios desarrollados en Make, haga clic en los siguientes enlaces:
+
+[Enlace al Blueprint — Escenario 1: Clasificación](https://drive.google.com/file/d/1NxiYUCyVxHyb4xd7dcyoWWlV1aCJ1SoZ/view?usp=sharing)
+
+[Enlace al Blueprint — Escenario 2: Envío aprobado](https://drive.google.com/drive/folders/1FbJmuc1HrIMvgZuO6ud6bKWbB249synL)
+
+# Diagrama de flujo
+
+![Diagrama de flujo Human-in-the-loop](screenshots/diagrama_flujo.png)
+
+# Arquitectura: por qué el Human-in-the-loop detiene realmente el flujo
+
+Este sistema no está implementado como un único escenario con un paso de decisión intermedio. Está dividido deliberadamente en dos escenarios independientes en Make, precisamente para que la aprobación humana sea una barrera técnica real y no solo una anotación en el diagrama:
+
+* Escenario 1 — Clasificación: procesa la pregunta, la clasifica con IA y notifica a un humano en Slack. Termina ahí. No contiene ningún módulo de envío de correo.
+
+* Escenario 2 — Envío aprobado: existe como una automatización separada, activada únicamente por un Slash Command (/aprobar [ID]) que un humano debe escribir manualmente en Slack. Solo dentro de este segundo escenario existe el módulo de Gmail.
+
+Esta separación es lo que garantiza el bloqueo real: no existe ningún camino de ejecución dentro del Escenario 1 que llegue al módulo de Gmail. Si nadie escribe el comando de aprobación, el registro permanece indefinidamente en estado "Procesado por IA" y el correo nunca se envía — no hay temporizador, reintento automático ni condición alterna que lo dispare.
+
+# Descripción del flujo
+
+1. (Disparador) Google Sheets simula la entrada de preguntas de compradores (nombre, producto, pregunta, canal de contacto).
+
+2. (Acción) Airtable ("cerebro" del sistema) crea un registro nuevo con estado "Pendiente", guardando el historial completo.
+
+3. (Acción) Claude (modelo Haiku) clasifica la pregunta en una de 3 categorías: Venta, Reclamo/Devolucion o Consulta General.
+
+4. (Acción) Airtable actualiza ese mismo registro con la categoría asignada y cambia el estado a "Procesado por IA".
+
+5. (Notificación) Slack notifica a un humano con el resumen (cliente, pregunta, categoría) y el ID del registro. Aquí termina el Escenario 1.
+
+6. (Punto de decisión — bloqueo real) El flujo queda en espera indefinida. Solo continúa si un humano escribe explícitamente /aprobar [ID] en Slack, lo que activa el Webhook del Escenario 2.
+
+7. (Acción) Webhook recibe el comando /aprobar junto con el ID del registro.
+
+8. (Acción) Gmail envía la respuesta final personalizada al comprador.
+
+9. (Acción) Airtable actualiza el registro a estado "Aprobado por Humano".
+
+Si el humano nunca aprueba, el proceso queda detenido en el paso 5 de forma permanente — el registro no avanza ni se envía respuesta alguna, quedando disponible para revisión manual en Airtable.
+
+# Cómo funciona la resiliencia
+
+* Se agregó un Error Handler directamente sobre el módulo de Claude (Create a Prompt).
+
+* Si Claude responde correctamente, el flujo continúa normal hacia Airtable (Update a Record).
+
+* Directiva "Retry": si Claude falla, Make reintenta automáticamente hasta 3 veces, esperando 1 minuto entre cada intento.
+
+* En paralelo, se dispara un aviso por Slack al canal de monitoreo, para que el equipo humano se entere de inmediato.
+
+* Se activó "Store incomplete executions" a nivel de escenario, para que Make guarde el registro que falló y pueda reintentarlo o revisarse manualmente sin perder información.
+
+* Esto evita que el flujo se detenga por completo ante un error temporal de la API externa (Claude).
+
+# Modelo de datos — Tabla "Preguntas_Compradores" (Airtable)
+
+| Campo | Tipo | Descripción |
+| :---- | :---- | :---- |
+| ID_Pregunta | Autonumber | Identificador único automático de cada registro |
+| Nombre_Cliente | Single line text | Nombre del comprador |
+| Producto | Single line text | Producto al que se refiere la pregunta |
+| Pregunta | Long text | Texto completo de la pregunta del comprador |
+| Fecha | Date | Fecha en que se recibió la pregunta |
+| Canal_Contacto | Single select | Email / WhatsApp — por dónde se responde al cliente |
+| Categoria_IA | Single select | Venta / Reclamo/Devolucion / Consulta General (la llena Claude) |
+| Estado | Single select | Pendiente → Procesado por IA → Aprobado por Humano |
+
+# Cuadro comparativo de costos — justificación de modelos de IA
+
+## 1. Comparativo entre modelos de la familia Claude
+
+|  | Claude Haiku | Claude Sonnet | Claude Opus |
+| :---- | :---- | :---- | :---- |
+| Costo aprox. (input) | $0.80 / millón tokens | $3 / millón tokens | $15 / millón tokens |
+| Costo aprox. (output) | $4 / millón tokens | $15 / millón tokens | $75 / millón tokens |
+| Velocidad | Muy rápida | Rápida | Más lenta |
+| Calidad para clasificación simple | Suficiente y confiable | Sobredimensionada | Muy sobredimensionada |
+| Costo por 1,000 clasificaciones* | ~$0.02 USD | ~$0.07 USD | ~$0.35 USD |
+| Elegido para este proyecto | Sí ✓ | No | No |
+
+*Cálculo estimado con prompt corto (~150 tokens de entrada) y Max Tokens: 20 de salida por clasificación.*
+
+La tarea de clasificar una pregunta en 3 categorías fijas es de baja complejidad semántica. Usar Sonnet u Opus multiplicaría el costo sin mejorar la precisión de clasificación. Con el crédito de $5 USD disponible, Claude Haiku permite procesar aproximadamente 250,000 clasificaciones — muy por encima de lo necesario para pruebas y demo del proyecto.
+
+## 2. Comparativo entre proveedores de IA
+
+|  | Claude (Anthropic) | ChatGPT (OpenAI) | Gemini (Google) |
+| :---- | :---- | :---- | :---- |
+| Modelo usado | Claude Haiku 4.5 | GPT-4o mini | Gemini 1.5 Flash |
+| Costo input | ~$0.80 / millón tokens | ~$0.15 / millón tokens | ~$0.075 / millón tokens |
+| Costo output | ~$4 / millón tokens | ~$0.60 / millón tokens | ~$0.30 / millón tokens |
+| Integración nativa en Make | Sí, módulo 'Anthropic Claude' | Sí, módulo 'OpenAI' | Sí, módulo 'Google Gemini' |
+| Seguimiento de instrucciones estrictas | Muy alto | Alto, más propenso a texto extra | Medio, requiere prompts reforzados |
+| Elegido para este proyecto | Sí ✓ | No | No |
+
+Aunque existen alternativas más económicas por token (GPT-4o mini, Gemini Flash), se eligió Claude Haiku por su alto grado de adherencia a instrucciones estrictas de formato — un requisito crítico en este proyecto, ya que el prompt exige que el modelo responda ÚNICAMENTE con una de tres palabras exactas ("Venta", "Reclamo/Devolucion", "Consulta General"), sin explicación, puntuación ni comillas adicionales.
+
+Airtable usa esos valores como Single Select con coincidencia exacta, por lo que cualquier variación en el formato de salida (texto extra, mayúsculas distintas, puntuación) provoca errores 422 al actualizar el registro — problema que ya se documentó y resolvió durante el desarrollo (ver sección "Errores ya resueltos").
+
+Además, el costo absoluto de Claude Haiku para este volumen de uso es insignificante en términos prácticos, por lo que la diferencia de céntimos entre proveedores no es un factor decisivo frente a la confiabilidad del formato de salida.
+
+# APIs y conexiones utilizadas
+
+| API / Servicio | Uso en el proyecto |
+| :---- | :---- |
+| Google Sheets API (OAuth) | Lectura de filas nuevas (simulación de entrada de preguntas) |
+| Airtable API (OAuth) | Creación y actualización de registros |
+| Anthropic API (API Key) | Modelo Claude Haiku, Max Tokens: 20, para clasificación económica |
+| Slack API (Bot Token / OAuth) | Envío de notificaciones y recepción del Slash Command /aprobar |
+| Gmail API (OAuth) | Envío de la respuesta final personalizada, solo tras aprobación humana |
+
+# Base de datos en Airtable
+
+La base de datos correspondiente al proyecto puede consultarse en modo de solo lectura mediante el siguiente enlace:
+
+[Enlace de Airtable](https://airtable.com/appDN6yAqSA2osDvd/tblQiZBWzjr6rhiL4/viw9M1w5I5MGioXcf)
+
+# Video demo
+
+[Link de video prueba de flujo — explicación del proyecto](https://www.youtube.com/watch?v=hiC4fo1hS8w)
