@@ -14,6 +14,8 @@ Para consultar los archivos Blueprint (.json) de los dos escenarios desarrollado
 
 ![Diagrama de flujo Human-in-the-loop](diagrama_flujo.png)
 
+También disponible en [formato PDF](diagrama_arquitectura.pdf).
+
 # Arquitectura: por qué el Human-in-the-loop detiene realmente el flujo
 
 Este sistema no está implementado como un único escenario con un paso de decisión intermedio. Está dividido deliberadamente en dos escenarios independientes en Make, precisamente para que la aprobación humana sea una barrera técnica real y no solo una anotación en el diagrama:
